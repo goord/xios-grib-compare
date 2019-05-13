@@ -1,0 +1,13 @@
+name: xios-grib-cmp
+channels:
+- conda-forge
+- defaults
+dependencies:
+- cdo=1.9.6
+- python-cdo
+- python-eccodes
+- netcdf4
+- pip
+- python=2.7.15
+- setuptools=39.2.0
+- numpy>=1.15.1
