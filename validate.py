@@ -19,3 +19,7 @@ def main(args=None):
     ncfiles = glob.glob(args.nc)
 
     complib.compare_vars(ncfiles, grbfiles, 1)
+
+
+if __name__ == "__main__":
+    main()
