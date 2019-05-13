@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 
-import glob
-import complib
 import argparse
+
+import complib
 
 
 def main(args=None):
@@ -17,10 +17,7 @@ def main(args=None):
 
     args = parser.parse_args()
 
-    grbfiles = glob.glob(args.grb)
-    ncfiles = glob.glob(args.nc)
-
-    complib.compare_vars(ncfiles, grbfiles, 1)
+    complib.compare_vars(args.nc, args.grb, 1)
 
 
 if __name__ == "__main__":
