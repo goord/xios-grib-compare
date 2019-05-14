@@ -90,6 +90,9 @@ def compare_vars(nc_files, grib_files, num_threads):
                     break
                 varname = str(gribapi.grib_get(record, "shortName"))
                 ltype = level_types.get(str(gribapi.grib_get(record, "typeOfLevel")), "none")
+                if ltype == "isobaricInPa":
+                    gribapi.grib_release(record)
+                    continue
                 if (varname, ltype) in tmp_grbs:
                     gribapi.grib_write(record, tmp_grbs[(varname, ltype)])
                 gribapi.grib_release(record)
