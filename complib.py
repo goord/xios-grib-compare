@@ -1,9 +1,13 @@
 import multiprocessing
+import logging
 import os
+import time
 
 import cdo
 import gribapi
 import netCDF4
+
+logger = multiprocessing.log_to_stderr(logging.DEBUG)
 
 shvars = ["pt", "mont", "pres", "etadot", "z", "t", "u", "v", "w", "vo", "d", "r"]
 
@@ -42,14 +46,16 @@ def compare_vars(nc_files, grib_files, num_threads):
         file_atts = os.path.basename(ncfile)[:-3].split('_')
         freq, grid_type, lev_type = file_atts[1], file_atts[2], file_atts[3]
         if grid_type != "regular":
-            print "Dismissing variables on reduced grid in", ncfile
+            logger.info("Dismissing variable %s on reduced grid in %s" % (v[0], v[1]))
+            continue
         key = (v[0], lev_type)
         fpath = os.path.join(temp_dir, "_".join([v[0], lev_type]) + ".grib")
         f = open(fpath, 'w')
         tmp_grbs[key] = f
         grbvars.append((v[0], v[1], fpath))
+    start = time.time()
     for grib_file in grib_files:
-        print "Splitting input file", grib_file
+        logger.info("Splitting input file %s" % grib_file)
         with open(grib_file, 'r') as grib_in:
             while True:
                 record = gribapi.grib_new_from_file(grib_in)
@@ -64,6 +70,9 @@ def compare_vars(nc_files, grib_files, num_threads):
         grb.close()
     pool = multiprocessing.Pool(processes=num_threads)
     pool.map(postproc_worker, grbvars)
+    end = time.time()
+    logger.info("The post-processing loop took %d seconds" % (end - start))
+#    create_nc_diffs(grbvars)
 
 
 def postproc_worker(vartuple):
@@ -71,7 +80,7 @@ def postproc_worker(vartuple):
     file_atts = os.path.basename(ncfile)[:-3].split('_')
     freq, grid_type, lev_type = file_atts[1], file_atts[2], file_atts[3]
     app = cdo.Cdo()
-    print "Processing", grbfile
+    logger.info("Processing %s" % grbfile)
     freqopt = None
     if freq == "3h":
         freqopt = "-selhour,0,3,6,9,12,15,18,21"
@@ -82,10 +91,10 @@ def postproc_worker(vartuple):
     elif freq == "1m":
         freqopt = "-monmean"
     else:
-        print "Frequency", freqopt, "not recognized, skipping variable", varname, "from file", ncfile
+        logger.warning("Frequency %s not recognized, skipping variable %s from file %s" % (freqopt, varname, ncfile))
         return
     output = grbfile.replace(".grib", "_" + freq + ".nc")
     if varname in shvars:
-        app.sp2gpl(input=grbfile, output=output, options="-f nc " + freqopt)
+        app.sp2gpl(input=" ".join([freqopt, grbfile]), output=output, options="-f nc ")
     else:
-        app.copy(input=grbfile, output=output, options="-f nc -R " + freqopt)
+        app.copy(input=" ".join([freqopt, grbfile]), output=output, options="-f nc -R ")
