@@ -32,6 +32,33 @@ def extract_variables(ncfiles):
     return result
 
 
+def create_nc_diffs(grbvars):
+    datasets = {}
+    for v in grbvars:
+        if v[1] in datasets:
+            datasets[v[1]].append(v)
+        else:
+            datasets[v[1]] = [v]
+    for ncpath, vlist in datasets:
+        dstpath = os.path.join(temp_dir, os.path.basename(ncpath))
+        with netCDF4.Dataset(ncpath, 'r') as src, netCDF4.Dataset(dstpath, 'w') as dst:
+            # copy global attributes all at once via dictionary
+            dst.setncatts(src.__dict__)
+            # copy dimensions
+            for name, dimension in src.dimensions.items():
+                dst.createDimension(
+                    name, (len(dimension) if not dimension.isunlimited() else None))
+                # copy all file data except for the excluded
+            for name, variable in src.variables.items():
+                dst.createVariable(name, variable.datatype, variable.dimensions)
+                dst[name][:] = src[name][:]
+                # copy variable attributes all at once via dictionary
+                dst[name].setncatts(src[name].__dict__)
+                for v in vlist:
+                    if v[0] == name:
+                        print "Source file:", v[-1]
+
+
 def compare_vars(nc_files, grib_files, num_threads):
     ncvars = extract_variables(nc_files)
     tmp_grbs = {}
@@ -69,10 +96,10 @@ def compare_vars(nc_files, grib_files, num_threads):
     for grb in tmp_grbs.values():
         grb.close()
     pool = multiprocessing.Pool(processes=num_threads)
-    pool.map(postproc_worker, grbvars)
+    ncfiles = pool.map(postproc_worker, grbvars)
     end = time.time()
     logger.info("The post-processing loop took %d seconds" % (end - start))
-#    create_nc_diffs(grbvars)
+    create_nc_diffs(zip(grbvars, ncfiles))
 
 
 def postproc_worker(vartuple):
@@ -98,3 +125,4 @@ def postproc_worker(vartuple):
         app.sp2gpl(input=" ".join([freqopt, grbfile]), output=output, options="-f nc ")
     else:
         app.copy(input=" ".join([freqopt, grbfile]), output=output, options="-f nc -R ")
+    return output
