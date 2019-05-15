@@ -39,8 +39,9 @@ def create_nc_diffs(grbvars):
             datasets[v[1]].append(v)
         else:
             datasets[v[1]] = [v]
-    for ncpath, vlist in datasets:
+    for ncpath, vlist in datasets.items():
         dstpath = os.path.join(temp_dir, os.path.basename(ncpath))
+        logger.info("Writing validation file %s..." % dstpath)
         with netCDF4.Dataset(ncpath, 'r') as src, netCDF4.Dataset(dstpath, 'w') as dst:
             # copy global attributes all at once via dictionary
             dst.setncatts(src.__dict__)
@@ -56,7 +57,10 @@ def create_nc_diffs(grbvars):
                 dst[name].setncatts(src[name].__dict__)
                 for v in vlist:
                     if v[0] == name:
-                        print "Source file:", v[-1]
+                        with netCDF4.Dataset(v[-1], 'r') as orig:
+                            ifsname = name + "_ifs"
+                            dst.createVariable(ifsname, variable.datatype, variable.dimensions)
+                            dst[ifsname][:] = orig[name][:]
 
 
 def compare_vars(nc_files, grib_files, num_threads):
@@ -102,7 +106,7 @@ def compare_vars(nc_files, grib_files, num_threads):
     ncfiles = pool.map(postproc_worker, grbvars)
     end = time.time()
     logger.info("The post-processing loop took %d seconds" % (end - start))
-    create_nc_diffs(zip(grbvars, ncfiles))
+    create_nc_diffs([grbvars[i] + (ncfiles[i],) for i in range(len(grbvars))])
 
 
 def postproc_worker(vartuple):
