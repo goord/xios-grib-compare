@@ -146,5 +146,5 @@ def postproc_worker(vartuple):
         if varname in shvars:
             app.sp2gpl(input=" ".join([freqopt, grbfile]), output=output, options="-f nc ")
         else:
-            app.copy(input=" ".join(["-setgridtype, regular", freqopt, grbfile]), output=output, options="-f nc")
+            app.copy(input=" ".join(["-setgridtype,regular", freqopt, grbfile]), output=output, options="-f nc")
     return output
