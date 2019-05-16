@@ -19,6 +19,9 @@ level_types = {"surface": "sfc",
 
 temp_dir = os.path.join(os.getcwd(), "tmp")
 
+split_grib = False
+post_proc_grib = False
+
 
 def extract_variables(ncfiles):
     result = []
@@ -54,6 +57,7 @@ def create_nc_diffs(grbvars):
                 dst[name].setncatts(src[name].__dict__)
                 for v in vlist:
                     if v[0] == name:
+                        logger.info("Opening post-processed nc file %s" % v[-1])
                         with netCDF4.Dataset(v[-1], 'r') as orig:
                             ifsname = name + "_ifs"
                             if name in orig:
@@ -81,29 +85,32 @@ def compare_vars(nc_files, grib_files, num_threads):
             continue
         key = (v[0], lev_type)
         fpath = os.path.join(temp_dir, "_".join([v[0], lev_type]) + ".grib")
-        tmp_grbs[key] = open(fpath, 'w')
+        if split_grib:
+            tmp_grbs[key] = open(fpath, 'w')
         grbvars.append((v[0], v[1], fpath))
     start = time.time()
     for grib_file in grib_files:
         logger.info("Splitting input file %s" % grib_file)
-        with open(grib_file, 'r') as grib_in:
-            while True:
-                record = gribapi.grib_new_from_file(grib_in)
-                if record is None:
-                    break
-                varname = str(gribapi.grib_get(record, "shortName"))
-                typel = str(gribapi.grib_get(record, "typeOfLevel"))
-                ltype = level_types.get(typel, "none")
-                if typel == "isobaricInPa":
+        if split_grib:
+            with open(grib_file, 'r') as grib_in:
+                while True:
+                    record = gribapi.grib_new_from_file(grib_in)
+                    if record is None:
+                        break
+                    varname = str(gribapi.grib_get(record, "shortName"))
+                    typel = str(gribapi.grib_get(record, "typeOfLevel"))
+                    ltype = level_types.get(typel, "none")
+                    if typel == "isobaricInPa":
+                        gribapi.grib_release(record)
+                        continue
+                    ofile = tmp_grbs.get((varname, ltype), None)
+                    if ofile is not None:
+                        gribapi.grib_write(record, ofile)
                     gribapi.grib_release(record)
-                    continue
-                ofile = tmp_grbs.get((varname, ltype), None)
-                if ofile is not None:
-                    gribapi.grib_write(record, ofile)
-                gribapi.grib_release(record)
-    for grb in tmp_grbs.values():
-        grb.close()
-    pool = multiprocessing.Pool(processes=num_threads)
+    if split_grib:
+        for grb in tmp_grbs.values():
+            grb.close()
+    pool = multiprocessing.Pool(processes=(num_threads if post_proc_grib else 1))
     ncfiles = pool.map(postproc_worker, grbvars)
     end = time.time()
     logger.info("The post-processing loop took %d seconds" % (end - start))
@@ -129,8 +136,9 @@ def postproc_worker(vartuple):
         logger.warning("Frequency %s not recognized, skipping variable %s from file %s" % (freqopt, varname, ncfile))
         return
     output = grbfile.replace(".grib", "_" + freq + ".nc")
-    if varname in shvars:
-        app.sp2gpl(input=" ".join([freqopt, grbfile]), output=output, options="-f nc ")
-    else:
-        app.copy(input=" ".join([freqopt, grbfile]), output=output, options="-f nc -R ")
+    if post_proc_grib:
+        if varname in shvars:
+            app.sp2gpl(input=" ".join([freqopt, grbfile]), output=output, options="-f nc ")
+        else:
+            app.copy(input=" ".join([freqopt, grbfile]), output=output, options="-f nc -R ")
     return output
