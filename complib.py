@@ -43,26 +43,24 @@ def create_nc_diffs(grbvars):
         dstpath = os.path.join(temp_dir, os.path.basename(ncpath))
         logger.info("Writing validation file %s..." % dstpath)
         with netCDF4.Dataset(ncpath, 'r') as src, netCDF4.Dataset(dstpath, 'w') as dst:
-            # copy global attributes all at once via dictionary
             dst.setncatts(src.__dict__)
-            # copy dimensions
             for name, dimension in src.dimensions.items():
                 dst.createDimension(
                     name, (len(dimension) if not dimension.isunlimited() else None))
-                # copy all file data except for the excluded
             for name, variable in src.variables.items():
                 dst.createVariable(name, variable.datatype, variable.dimensions)
+                # dst.createVariable(ifsname, variable.datatype, variable.dimensions)
                 dst[name][:] = src[name][:]
-                # copy variable attributes all at once via dictionary
                 dst[name].setncatts(src[name].__dict__)
                 for v in vlist:
                     if v[0] == name:
                         with netCDF4.Dataset(v[-1], 'r') as orig:
                             ifsname = name + "_ifs"
-                            dst.createVariable(ifsname, variable.datatype, variable.dimensions)
-                            logger.info("dst shape: %s orig shape: %s" % (str(dst[ifsname].shape), str(orig[name].shape)))
-                            #dst[ifsname][:] = orig[name][:]
-                            dst[ifsname][:] = orig[name][:]
+                            if name in orig:
+                                logger.info("dst shape: %s orig shape: %s" % (str(dst[name].shape),
+                                                                              str(orig[name].shape)))
+                            else:
+                                logger.info("variables %s not found in %s" % (name, v[-1]))
 
 
 def compare_vars(nc_files, grib_files, num_threads):
