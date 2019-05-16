@@ -19,7 +19,7 @@ level_types = {"surface": "sfc",
 
 temp_dir = os.path.join(os.getcwd(), "tmp")
 
-split_grib = False
+split_grib = True
 post_proc_grib = True
 
 
@@ -30,9 +30,17 @@ def extract_variables(ncfiles):
         for var in ds.variables.keys():
             if var in ["lat", "lon"] or var.startswith("bounds_") or var.startswith("time_") or "levels" in var:
                 continue
+            if var == "pres":
+                continue
             result.append((str(var), ncfile))
         ds.close()
     return result
+
+
+def get_diff(src, checkds, name):
+    #    srctimes = src.variables["time_counter"]
+    #    checktimes = checkds.variables["time"]
+    return src.variables[name][...] - checkds.variables[name][1:, ...]
 
 
 def create_nc_diffs(grbvars):
@@ -46,26 +54,22 @@ def create_nc_diffs(grbvars):
         dstpath = os.path.join(temp_dir, os.path.basename(ncpath))
         logger.info("Writing validation file %s..." % dstpath)
         with netCDF4.Dataset(ncpath, 'r') as src, netCDF4.Dataset(dstpath, 'w') as dst:
-            #dst.setncatts(src.__dict__)
+            dst.setncatts(src.__dict__)
             for name, dimension in src.dimensions.items():
                 dst.createDimension(
                     name, (len(dimension) if not dimension.isunlimited() else None))
-            for name, variable in src.variables.items():
-                dst.createVariable(name, variable.datatype, variable.dimensions)
-                #dst.createVariable(ifsname, variable.datatype, variable.dimensions)
-                dst[name][:] = src[name][:]
-                #dst[name].setncatts(src[name].__dict__)
-                for v in vlist:
-                    print v
-                    if v[0] == name:
-                        logger.info("Opening post-processed nc file %s" % v[-1])
-                        with netCDF4.Dataset(v[-1], 'r') as orig:
-                            ifsname = name + "_ifs"
-                            if name in orig.variables.keys():
-                                logger.info("dst shape: %s orig shape: %s" % (str(dst[name].shape),
-                                                                              str(orig[name].shape)))
-                            else:
-                                logger.info("variables %s not found in %s" % (name, v[-1]))
+            for v in vlist:
+                varname, fname = v[0], v[-1]
+                if varname not in src.variables.keys():
+                    logger.error("Could not find variable %s in source file %s" % (varname, ncpath))
+                    continue
+                with netCDF4.Dataset(fname, 'r') as checkds:
+                    if varname not in checkds.variables.keys():
+                        logger.error("Could not find variable %s in source file %s" % (varname, checkds))
+                        continue
+                    srcvar, chkvar = src.variables[name], checkds.variables[name]
+                    dst.createVariable(name + "_diff", srcvar.datatype, srcvar.dimensions)
+                    dst.variables[name + "_diff"][...] = get_diff(src, checkds, name)
 
 
 def compare_vars(nc_files, grib_files, num_threads):
