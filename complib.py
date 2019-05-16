@@ -20,7 +20,7 @@ level_types = {"surface": "sfc",
 temp_dir = os.path.join(os.getcwd(), "tmp")
 
 split_grib = False
-post_proc_grib = False
+post_proc_grib = True
 
 
 def extract_variables(ncfiles):
@@ -46,21 +46,22 @@ def create_nc_diffs(grbvars):
         dstpath = os.path.join(temp_dir, os.path.basename(ncpath))
         logger.info("Writing validation file %s..." % dstpath)
         with netCDF4.Dataset(ncpath, 'r') as src, netCDF4.Dataset(dstpath, 'w') as dst:
-            dst.setncatts(src.__dict__)
+            #dst.setncatts(src.__dict__)
             for name, dimension in src.dimensions.items():
                 dst.createDimension(
                     name, (len(dimension) if not dimension.isunlimited() else None))
             for name, variable in src.variables.items():
                 dst.createVariable(name, variable.datatype, variable.dimensions)
-                # dst.createVariable(ifsname, variable.datatype, variable.dimensions)
+                #dst.createVariable(ifsname, variable.datatype, variable.dimensions)
                 dst[name][:] = src[name][:]
-                dst[name].setncatts(src[name].__dict__)
+                #dst[name].setncatts(src[name].__dict__)
                 for v in vlist:
+                    print v
                     if v[0] == name:
                         logger.info("Opening post-processed nc file %s" % v[-1])
                         with netCDF4.Dataset(v[-1], 'r') as orig:
                             ifsname = name + "_ifs"
-                            if name in orig:
+                            if name in orig.variables.keys():
                                 logger.info("dst shape: %s orig shape: %s" % (str(dst[name].shape),
                                                                               str(orig[name].shape)))
                             else:
@@ -141,5 +142,5 @@ def postproc_worker(vartuple):
         if varname in shvars:
             app.sp2gpl(input=" ".join([freqopt, grbfile]), output=output, options="-f nc ")
         else:
-            app.copy(input=" ".join([freqopt, grbfile]), output=output, options="-f nc -R ")
+            app.copy(input=" ".join(["-setgridtype, regular", freqopt, grbfile]), output=output, options="-f nc")
     return output
