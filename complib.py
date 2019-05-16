@@ -70,11 +70,12 @@ def create_nc_diffs(grbvars):
 def compare_vars(nc_files, grib_files, num_threads):
     ncvars = extract_variables(nc_files)
     tmp_grbs = {}
-    if os.path.exists(temp_dir):
-        if any(os.listdir(temp_dir)):
-            raise Exception("Temporary working directory exists and is not empty")
-    else:
-        os.makedirs(temp_dir)
+    if split_grib and post_proc_grib:
+        if os.path.exists(temp_dir):
+            if any(os.listdir(temp_dir)):
+                raise Exception("Temporary working directory exists and is not empty")
+        else:
+            os.makedirs(temp_dir)
     grbvars = []
     for v in ncvars:
         ncfile = v[1]
