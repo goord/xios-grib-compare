@@ -83,8 +83,7 @@ def compare_vars(nc_files, grib_files, num_threads):
             continue
         key = (v[0], lev_type)
         fpath = os.path.join(temp_dir, "_".join([v[0], lev_type]) + ".grib")
-        f = open(fpath, 'w')
-        tmp_grbs[key] = f
+        tmp_grbs[key] = open(fpath, 'w')
         grbvars.append((v[0], v[1], fpath))
     start = time.time()
     for grib_file in grib_files:
@@ -95,12 +94,14 @@ def compare_vars(nc_files, grib_files, num_threads):
                 if record is None:
                     break
                 varname = str(gribapi.grib_get(record, "shortName"))
-                ltype = level_types.get(str(gribapi.grib_get(record, "typeOfLevel")), "none")
-                if ltype == "isobaricInPa":
+                typel = str(gribapi.grib_get(record, "typeOfLevel"))
+                ltype = level_types.get(typel, "none")
+                if typel == "isobaricInPa":
                     gribapi.grib_release(record)
                     continue
-                if (varname, ltype) in tmp_grbs:
-                    gribapi.grib_write(record, tmp_grbs[(varname, ltype)])
+                ofile = tmp_grbs.get((varname, ltype), None)
+                if ofile is not None:
+                    gribapi.grib_write(record, ofile)
                 gribapi.grib_release(record)
     for grb in tmp_grbs.values():
         grb.close()
