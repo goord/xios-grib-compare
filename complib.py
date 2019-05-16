@@ -60,6 +60,8 @@ def create_nc_diffs(grbvars):
                         with netCDF4.Dataset(v[-1], 'r') as orig:
                             ifsname = name + "_ifs"
                             dst.createVariable(ifsname, variable.datatype, variable.dimensions)
+                            logger.info("dst shape: %s orig shape: %s" % (str(dst[ifsname].shape), str(orig[name].shape)))
+                            #dst[ifsname][:] = orig[name][:]
                             dst[ifsname][:] = orig[name][:]
 
 
