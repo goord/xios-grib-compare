@@ -19,8 +19,8 @@ level_types = {"surface": "sfc",
 
 temp_dir = os.path.join(os.getcwd(), "tmp")
 
-split_grib = True
-post_proc_grib = True
+split_grib = False
+post_proc_grib = False
 
 
 def extract_variables(ncfiles):
@@ -37,10 +37,18 @@ def extract_variables(ncfiles):
     return result
 
 
-def get_diff(src, checkds, name):
-    #    srctimes = src.variables["time_counter"]
-    #    checktimes = checkds.variables["time"]
-    return src.variables[name][...] - checkds.variables[name][1:, ...]
+def get_diff(srcvar, chkvar):
+    src_shape, chk_shape = srcvar.shape, chkvar.shape
+    logger.info("XIOS shape: %s, GRIB shape: %s" % (str(src_shape), str(chk_shape)))
+    src_grid_sizes = (src_shape[-2], src_shape[-1])
+    chk_grid_sizes = (chk_shape[-2], chk_shape[-1])
+    if src_grid_sizes != chk_grid_sizes:
+        raise Exception("Different grid sizes detected for XIOS and GRIB data: %s not equal to %s" % (src_grid_sizes, chk_grid_sizes))
+    t_offset = chk_shape[0] - src_shape[0]
+    if len(chk_shape) == 4:
+        z_offset = src_shape[1] - chk_shape[1]
+        return srcvar[:, z_offset:, :, :] - chkvar[t_offset:, :, ::-1, :]
+    return srcvar[name][:, :, :] - chkvar[t_offset:, ::-1, :]
 
 
 def create_nc_diffs(grbvars):
@@ -64,12 +72,18 @@ def create_nc_diffs(grbvars):
                     logger.error("Could not find variable %s in source file %s" % (varname, ncpath))
                     continue
                 with netCDF4.Dataset(fname, 'r') as checkds:
-                    if varname not in checkds.variables.keys():
-                        logger.error("Could not find variable %s in source file %s" % (varname, checkds))
+                    srcvar = src.variables[varname]
+                    chkvar = checkds.variables.get(varname, checkds.variables.get(varname.upper(), None))
+                    if chkvar is None:
+                        logger.error("Could not find variable %s in file %s" % (varname, fname))
                         continue
-                    srcvar, chkvar = src.variables[name], checkds.variables[name]
-                    dst.createVariable(name + "_diff", srcvar.datatype, srcvar.dimensions)
-                    dst.variables[name + "_diff"][...] = get_diff(src, checkds, name)
+                    try:
+                        diff = get_diff(srcvar, chkvar)
+                    except Exception as e:
+                        logger.error("Skipping variable %s, reason: %s" % (varname, str(e)))
+                        continue
+                    dst.createVariable(varname + "_diff", srcvar.datatype, srcvar.dimensions)
+                    dst.variables[varname + "_diff"][...] = diff[...]
 
 
 def compare_vars(nc_files, grib_files, num_threads):
@@ -144,7 +158,7 @@ def postproc_worker(vartuple):
     output = grbfile.replace(".grib", "_" + freq + ".nc")
     if post_proc_grib:
         if varname in shvars:
-            app.sp2gpl(input=" ".join([freqopt, grbfile]), output=output, options="-f nc ")
+            app.sp2gpl(input=" ".join([freqopt, grbfile]), output=output, options="-f nc -t ecmwf")
         else:
-            app.copy(input=" ".join(["-setgridtype,regular", freqopt, grbfile]), output=output, options="-f nc")
+            app.copy(input=" ".join(["-setgridtype,regular", freqopt, grbfile]), output=output, options="-f nc -t ecmwf")
     return output
