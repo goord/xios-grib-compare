@@ -1,150 +1,126 @@
-import multiprocessing
 import logging
 import os
-import time
 
-import cdo
 import gribapi
-import netCDF4
-
-logger = multiprocessing.log_to_stderr(logging.DEBUG)
-
-shvars = ["pt", "mont", "pres", "etadot", "z", "t", "u", "v", "w", "vo", "d", "r"]
-
-level_types = {"surface": "sfc",
-               "isobaricInhPa": "pl",
-               "isobaricInPa": "pl",
-               "hybrid": "ml",
-               "depthBelowLandLayer": "sfc"}
-
-temp_dir = os.path.join(os.getcwd(), "tmp")
-
-split_grib = True
-post_proc_grib = True
+import netCDF4 as nc
+import numpy as np
+import pickle as pkl
+import matplotlib.pyplot as plt
+from scipy.interpolate import griddata
+import cartopy.crs as ccrs
 
 
-def extract_variables(ncfiles):
-    result = []
-    for ncfile in ncfiles:
-        ds = netCDF4.Dataset(ncfile)
-        for var in ds.variables.keys():
-            if var in ["lat", "lon"] or var.startswith("bounds_") or var.startswith("time_") or "levels" in var:
-                continue
-            if var == "pres":
-                continue
-            result.append((str(var), ncfile))
-        ds.close()
-    return result
+logging.basicConfig(level=logging.INFO)
+
+log = logging.getLogger(__name__)
+
+plot_vars = ["2t", "10u", "10v", "msl", "sp", "tclv", "tcww", "tcc", "cp", "lsp", "ci"]
+map_vars = ["10v", "sp", "cp"]
+prof_vars = ["q"]
 
 
-def get_diff(src, checkds, name):
-    #    srctimes = src.variables["time_counter"]
-    #    checktimes = checkds.variables["time"]
-    return src.variables[name][...] - checkds.variables[name][1:, ...]
+def get_xios_step(itim, dims):
+    if dims == 2:
+        return -1 if itim < 2 else itim - 2
+    if dims == 3:
+        return (itim - 1)/2
+    return -1
 
 
-def create_nc_diffs(grbvars):
-    datasets = {}
-    for v in grbvars:
-        if v[1] in datasets:
-            datasets[v[1]].append(v)
+def compare_data(gribfile, ncfile, dims=2):
+    recvars = set(plot_vars + map_vars) if dims == 2 else set(prof_vars)
+    dsxios = nc.Dataset(ncfile, 'r')
+    step, prevstep, itim, pl = 0, -1, 0, None
+    errorbar_result = {}
+    map_result = {}
+    with open(gribfile) as grb:
+        while True:
+            record = gribapi.grib_new_from_file(grb)
+            if record is None:
+                break
+            step = gribapi.grib_get(record, "stepRange")
+            if '-' in step:
+                step = int(step.split('-')[1])
+            else:
+                step = int(step)
+            varname = str(gribapi.grib_get(record, "shortName"))
+            if prevstep != step:
+                itim += 1
+            jtim = get_xios_step(itim, dims)
+            if jtim > 0 and varname in dsxios.variables and varname in recvars:
+                if pl is None:
+                    pl = gribapi.grib_get_array(record, "pl")
+                fldgrib = gribapi.grib_get_values(record)
+                refval = abs(float(gribapi.grib_get(record, "referenceValue")))
+                if refval == 0.:
+                    refval = 1
+                nbits = int(gribapi.grib_get(record, "bitsPerValue"))
+                fldxios = dsxios.variables[varname][jtim, ...]
+                absdiffindex = np.argmax(np.abs(fldgrib - fldxios))
+                absdiff = fldgrib[absdiffindex] - fldxios[absdiffindex]
+                reldiff = absdiff / refval
+                resgrib = (gribapi.grib_get(record, "maximum") - gribapi.grib_get(record, "minimum")) / (2 ** nbits * refval)
+                if varname not in errorbar_result:
+                    errorbar_result[varname] = (absdiff, reldiff, resgrib, step)
+                else:
+                    a, r, res, stp = errorbar_result[varname]
+                    if abs(absdiff) > abs(a):
+                        errorbar_result[varname] = (absdiff, reldiff, resgrib, step)
+                if varname in map_vars:
+                    if varname not in map_result or abs(absdiff) > abs(errorbar_result[varname][0]):
+                        map_result[varname] = fldgrib - fldxios
+            prevstep = step
+            gribapi.grib_release(record)
+    fmt = "{:>20}" * 5
+    log.info(fmt.format("variable", "abs. diff.", "rel. diff.", "grb. res.", "step"))
+    for key, item in errorbar_result.items():
+        log.info(fmt.format(key, *item))
+    plot_error_bars(errorbar_result)
+    plot_error_maps(map_result, dsxios)
+
+
+def plot_error_bars(errorbar_result):
+    values = np.array([v[1] for v in errorbar_result.values()])
+    errors = np.array([v[2] for v in errorbar_result.values()])
+    plt.style.use("ggplot")
+    markers, caps, bars = plt.errorbar(x=list(range(0, len(values))), y=values, yerr=errors, ecolor="darkred",
+                                       capsize=8, elinewidth=10, ls='none', marker='_', markeredgecolor="black",
+                                       markersize=8)
+    [bar.set_alpha(0.5) for bar in bars]
+    [cap.set_alpha(0.5) for cap in caps]
+    plt.axhline(0, color="black", linestyle=":")
+    plt.yscale("symlog", linthreshy=0.00001)
+    plt.ylabel("relative error")
+    plt.xticks(list(range(0, len(values))), errorbar_result.keys())
+    #    plt.show()
+    plt.savefig("boxplot.png", dpi=300)
+    plt.clf()
+    plt.close()
+
+
+def plot_error_maps(map_result, dsxios):
+    lats = dsxios.variables["lat"][...]
+    lons = dsxios.variables["lon"][...]
+    newlats = np.array(list(sorted(set(lats))))
+    newlons = np.linspace(0, 360, 2 * len(newlats))
+    xi, yi = np.meshgrid(newlons, newlats)
+    for varname in map_result.keys():
+        longname = dsxios.variables[varname].long_name
+        units = dsxios.variables[varname].units
+        fname = varname + "_interp.pkl"
+        if os.path.isfile(fname):
+            with open(fname, "rb") as ifile:
+                zi = pkl.load(ifile)
         else:
-            datasets[v[1]] = [v]
-    for ncpath, vlist in datasets.items():
-        dstpath = os.path.join(temp_dir, os.path.basename(ncpath))
-        logger.info("Writing validation file %s..." % dstpath)
-        with netCDF4.Dataset(ncpath, 'r') as src, netCDF4.Dataset(dstpath, 'w') as dst:
-            dst.setncatts(src.__dict__)
-            for name, dimension in src.dimensions.items():
-                dst.createDimension(
-                    name, (len(dimension) if not dimension.isunlimited() else None))
-            for v in vlist:
-                varname, fname = v[0], v[-1]
-                if varname not in src.variables.keys():
-                    logger.error("Could not find variable %s in source file %s" % (varname, ncpath))
-                    continue
-                with netCDF4.Dataset(fname, 'r') as checkds:
-                    if varname not in checkds.variables.keys():
-                        logger.error("Could not find variable %s in source file %s" % (varname, checkds))
-                        continue
-                    srcvar, chkvar = src.variables[name], checkds.variables[name]
-                    dst.createVariable(name + "_diff", srcvar.datatype, srcvar.dimensions)
-                    dst.variables[name + "_diff"][...] = get_diff(src, checkds, name)
-
-
-def compare_vars(nc_files, grib_files, num_threads):
-    ncvars = extract_variables(nc_files)
-    tmp_grbs = {}
-    if split_grib and post_proc_grib:
-        if os.path.exists(temp_dir):
-            if any(os.listdir(temp_dir)):
-                raise Exception("Temporary working directory exists and is not empty")
-        else:
-            os.makedirs(temp_dir)
-    grbvars = []
-    for v in ncvars:
-        ncfile = v[1]
-        file_atts = os.path.basename(ncfile)[:-3].split('_')
-        freq, grid_type, lev_type = file_atts[1], file_atts[2], file_atts[3]
-        if grid_type != "regular":
-            logger.info("Dismissing variable %s on reduced grid in %s" % (v[0], v[1]))
-            continue
-        key = (v[0], lev_type)
-        fpath = os.path.join(temp_dir, "_".join([v[0], lev_type]) + ".grib")
-        if split_grib:
-            tmp_grbs[key] = open(fpath, 'w')
-        grbvars.append((v[0], v[1], fpath))
-    start = time.time()
-    for grib_file in grib_files:
-        logger.info("Splitting input file %s" % grib_file)
-        if split_grib:
-            with open(grib_file, 'r') as grib_in:
-                while True:
-                    record = gribapi.grib_new_from_file(grib_in)
-                    if record is None:
-                        break
-                    varname = str(gribapi.grib_get(record, "shortName"))
-                    typel = str(gribapi.grib_get(record, "typeOfLevel"))
-                    ltype = level_types.get(typel, "none")
-                    if typel == "isobaricInPa":
-                        gribapi.grib_release(record)
-                        continue
-                    ofile = tmp_grbs.get((varname, ltype), None)
-                    if ofile is not None:
-                        gribapi.grib_write(record, ofile)
-                    gribapi.grib_release(record)
-    if split_grib:
-        for grb in tmp_grbs.values():
-            grb.close()
-    pool = multiprocessing.Pool(processes=(num_threads if post_proc_grib else 1))
-    ncfiles = pool.map(postproc_worker, grbvars)
-    end = time.time()
-    logger.info("The post-processing loop took %d seconds" % (end - start))
-    create_nc_diffs([grbvars[i] + (ncfiles[i],) for i in range(len(grbvars))])
-
-
-def postproc_worker(vartuple):
-    varname, ncfile, grbfile = vartuple[0], vartuple[1], vartuple[2]
-    file_atts = os.path.basename(ncfile)[:-3].split('_')
-    freq, grid_type, lev_type = file_atts[1], file_atts[2], file_atts[3]
-    app = cdo.Cdo()
-    logger.info("Processing %s" % grbfile)
-    freqopt = None
-    if freq == "3h":
-        freqopt = "-selhour,0,3,6,9,12,15,18,21"
-    elif freq == "6h":
-        freqopt = "-selhour,0,6,12,18"
-    elif freq == "1d":
-        freqopt = "-daymean"
-    elif freq == "1m":
-        freqopt = "-monmean"
-    else:
-        logger.warning("Frequency %s not recognized, skipping variable %s from file %s" % (freqopt, varname, ncfile))
-        return
-    output = grbfile.replace(".grib", "_" + freq + ".nc")
-    if post_proc_grib:
-        if varname in shvars:
-            app.sp2gpl(input=" ".join([freqopt, grbfile]), output=output, options="-f nc ")
-        else:
-            app.copy(input=" ".join(["-setgridtype,regular", freqopt, grbfile]), output=output, options="-f nc")
-    return output
+            zi = griddata((lons, lats), map_result[varname], (xi, yi), method='nearest')
+            with open(fname, "wb") as ofile:
+                pkl.dump(zi, ofile)
+        ax = plt.axes(projection=ccrs.PlateCarree())
+        plt.gcf().set_size_inches(10, 6)
+        plt.pcolormesh(xi, yi, zi, cmap=plt.cm.bwr, transform=ccrs.PlateCarree())
+        plt.title(longname + " difference [" + units + "]")
+        ax.coastlines()
+        plt.colorbar(fraction=0.036, pad=0.04)  # draw colorbar
+        plt.savefig(varname + "_map.png", dpi=300)
+        plt.clf()
+        plt.close()
