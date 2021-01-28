@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import griddata
 import cartopy.crs as ccrs
 
-
 logging.basicConfig(level=logging.INFO)
 
 log = logging.getLogger(__name__)
@@ -24,7 +23,7 @@ def get_xios_step(itim, dims):
     if dims == 2:
         return -1 if (itim < 2) else (itim - 2)
     if dims == 3:
-        return -1 if (itim % 2 == 0) else ((itim - 3)/2)
+        return -1 if (itim % 2 == 0) else ((itim - 3) / 2)
     return -1
 
 
@@ -44,14 +43,13 @@ def get_cached_results(directory, plotvars, mapvars):
     return plotcache, mapcache
 
 
-
 def write_cache(directory, dims, errbars, mapvars):
     if dims == 3:
         for v in set([k[0] for k in errbars.keys()]):
             keys = sorted([k for k in errbars.keys() if k[0] == v])
-            result = {"levels": [k[1] for k in keys], 
-                      "absdiff": [errbars[k][0] for k in keys], 
-                      "resol": [errbars[k][1] for k in keys], 
+            result = {"levels": [k[1] for k in keys],
+                      "absdiff": [errbars[k][0] for k in keys],
+                      "resol": [errbars[k][1] for k in keys],
                       "refval": [errbars[k][2] for k in keys]}
             filepath = os.path.join(directory, v + "_errs.json")
             with open(filepath, 'w') as ofile:
@@ -66,7 +64,6 @@ def write_cache(directory, dims, errbars, mapvars):
             filepath = os.path.join(directory, v + "_interp.pkl")
             with open(filepath, "wb") as ofile:
                 pkl.dump(mapvars[v], ofile)
-
 
 
 def compare_data(gribfile, ncfile, dims=2):
@@ -85,7 +82,7 @@ def compare_data(gribfile, ncfile, dims=2):
     read_data(recvars, gribfile, ncfile, errorbar_result, map_result, dims)
 
     write_cache(os.path.dirname(ncfile), dims, errorbar_result, map_result)
-    
+
     if dims == 3:
         for v, vals in plot_cache.items():
             levels, absdiff, resol, refval = vals["levels"], vals["absdiff"], vals["resol"], vals["refval"]
@@ -112,7 +109,6 @@ def compare_data(gribfile, ncfile, dims=2):
         plot_error_maps(map_result, dsxios)
 
 
-
 def read_data(recvars, gribfile, ncfile, errorbar_result, map_result, dims):
     if not any(recvars):
         return
@@ -133,7 +129,7 @@ def read_data(recvars, gribfile, ncfile, errorbar_result, map_result, dims):
                 itim += 1
             jtim = get_xios_step(itim, dims)
             if jtim > 0 and varname in dsxios.variables and varname in recvars:
-                #print "using",varname,"at step",step,"comparing to entry",jtim
+                # print "using",varname,"at step",step,"comparing to entry",jtim
                 if pl is None:
                     pl = gribapi.grib_get_array(record, "pl")
                 fldgrib = gribapi.grib_get_values(record)
@@ -151,7 +147,7 @@ def read_data(recvars, gribfile, ncfile, errorbar_result, map_result, dims):
                         fldxios = dsxios.variables[varname][jtim, ...]
                         key = varname
                     absdiffindex = np.argmax(np.abs(fldgrib - fldxios))
-                    #print "mean rel. diff is....", np.median(np.abs(fldgrib - fldxios)/fldgrib),"...level:",lev
+                    # print "mean rel. diff is....", np.median(np.abs(fldgrib - fldxios)/fldgrib),"...level:",lev
                     absdiff = fldgrib[absdiffindex] - fldxios[absdiffindex]
                     resgrib = (gribapi.grib_get(record, "maximum") - gribapi.grib_get(record, "minimum")) / (2 ** nbits)
                     if key not in errorbar_result:
@@ -175,12 +171,11 @@ def read_data(recvars, gribfile, ncfile, errorbar_result, map_result, dims):
             zi = griddata((lons, lats), map_result[key], (xi, yi), method='nearest')
             map_result[key] = zi
     dsxios.close()
-            
 
 
 def plot_error_bars(errorbar_result):
-    values = np.array([v[0]/v[2] for v in errorbar_result.values()])
-    errors = np.array([v[1]/v[2] for v in errorbar_result.values()])
+    values = np.array([v[0] / v[2] for v in errorbar_result.values()])
+    errors = np.array([v[1] / v[2] for v in errorbar_result.values()])
     plt.style.use("ggplot")
     markers, caps, bars = plt.errorbar(x=list(range(0, len(values))), y=values, yerr=errors, ecolor="darkred",
                                        capsize=8, elinewidth=10, ls='none', marker='_', markeredgecolor="black",
@@ -212,7 +207,7 @@ def plot_error_maps(map_result, dsxios):
         plt.title(longname + " difference [" + units + "]")
         ax.coastlines()
         plt.colorbar(fraction=0.036, pad=0.04)  # draw colorbar
-    #    plt.show()
+        #    plt.show()
         plt.savefig(varname + "_map.png", dpi=300)
         plt.clf()
         plt.close()
@@ -228,13 +223,14 @@ def plot_error_profs(errorbar_result, dsxios):
         values = np.array([v[0] for v in vals])
         errors = np.array([v[1] for v in vals])
         plt.style.use("ggplot")
-        plt.errorbar(y=levs, x=values, xerr=errors, ls='none', elinewidth=2.5, color="darkred", capsize=1, capthick=1, alpha=0.5)
+        plt.errorbar(y=levs, x=values, xerr=errors, ls='none', elinewidth=2.5, color="darkred", capsize=1, capthick=1,
+                     alpha=0.5)
         plt.axvline(0, color="black", linestyle=":")
         plt.xscale("symlog", linthreshx=1.e-11)
         plt.xlabel(longname + " difference [" + units + "]")
         plt.ylabel("model level")
         plt.gca().invert_yaxis()
-#        plt.show()
+        #        plt.show()
         plt.savefig("prof_" + varname + ".png", dpi=300)
         plt.clf()
         plt.close()
